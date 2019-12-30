@@ -1,0 +1,11 @@
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# Python
+venv/
+.venv/
+__pycache__/
+
+# OSX
+.DS_Store
