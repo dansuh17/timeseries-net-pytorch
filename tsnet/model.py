@@ -65,20 +65,22 @@ class CausalCNN(nn.Module):
         return self.net(x)
 
 
+def doubled_dilations(num_layers: int):
+    return [2 ** i for i in range(num_layers)]
+
+
 class TSNet(nn.Module):
     def __init__(self, in_channel, middle_channel, out_channel, num_layers: int):
         super().__init__()
 
-        # doubling dilations
-        dilations = [2 ** i for i in range(num_layers)]
         # equal numbers of output channels
         middle_channels = [middle_channel] * num_layers
 
         self.net = nn.Sequential(
-            CausalCNN(in_channel, middle_channels, dilations),
-            nn.AdaptiveAvgPool1d(output_size=1),
-            SqueezeTimeChannel(),
-            nn.Linear(middle_channel, out_channel),
+            CausalCNN(in_channel, middle_channels, dilations=doubled_dilations(num_layers)),
+            nn.AdaptiveAvgPool1d(output_size=1),  # reduce size
+            SqueezeTimeChannel(),  # reduce dimensions
+            nn.Linear(in_features=middle_channel, out_features=out_channel),
         )
 
     def forward(self, x):
