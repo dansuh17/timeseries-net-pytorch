@@ -8,15 +8,17 @@ from torchland.datasets.loader_builder import DataLoaderBuilder, DataLoader
 
 
 class UCRDataLoaderBuilder(DataLoaderBuilder):
-    def __init__(self, root_dir: str, dataset_name: str, batch_size: int, num_workers=4):
+    def __init__(self, root_dir: str, dataset_name: str,
+                 batch_size: int, num_workers=4,
+                 **kwargs):
         super().__init__()
         self.root_dir = root_dir
         self.dataset_name = dataset_name
         self.batch_size = batch_size
         self.num_workers = num_workers
 
-        self.train_dataset = UCRDataset(root_dir, dataset_name, train=True)
-        self.test_dataset = UCRDataset(root_dir, dataset_name, train=False)
+        self.train_dataset = UCRDataset(root_dir, dataset_name, train=True, **kwargs)
+        self.test_dataset = UCRDataset(root_dir, dataset_name, train=False, **kwargs)
 
         num_data = len(self.train_dataset)
         self.train_indices, self.validation_indices = self._split_train_val_indices(num_data)
@@ -141,7 +143,19 @@ class UCRDataset(dataset.Dataset):
         _, neg_sample = self._get_row(negative_idx)
         negative_samp = self._random_cut(neg_sample, size=self.sample_length)
 
+        anchor = self._add_axis(self._to_float(anchor))
+        positive_samp = self._add_axis(self._to_float(positive_samp))
+        negative_samp = self._add_axis(self._to_float(negative_samp))
+
         return class_label, anchor, positive_samp, negative_samp
+
+    @staticmethod
+    def _add_axis(sample: np.ndarray):
+        return sample[np.newaxis, :]
+
+    @staticmethod
+    def _to_float(sample: np.ndarray):
+        return sample.astype(dtype=np.float32)
 
     def _get_row(self, idx: int):
         row = self.data.iloc[idx].to_numpy()
