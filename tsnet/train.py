@@ -1,25 +1,19 @@
 from .model import TSNet
-from .loss import TripletLoss
 from .dataset import UCRDataLoaderBuilder
 
 import torch
-from torch import optim
+from torch import optim, nn
 from torchland.trainer.trainer import NetworkTrainer, TrainStage
-import numpy as np
 
 
 class TSNetTrainer(NetworkTrainer):
     def __init__(self, config: dict):
-        super().__init__(epoch=2000)  # TODO:
-        self.lr_init = self.get_or_else(
-            config, 'lr_init', default=3e-4)
-        self.batch_size = self.get_or_else(
-            config, 'batch_size', default=10)
-        data_root = self.get_or_else(
-            config, 'data_root', default='data_in')
-        data_name = self.get_or_else(
-            config, 'data_name', default=None)  # must be specified
-        self.sample_length = 150
+        super().__init__(epoch=2000)
+        self.lr_init = config.get('lr_init', 3e-4)
+        self.batch_size = config.get('batch_size', 10)
+        data_root = config.get('data_root', 'data_in')
+        data_name = config.get('data_name', None)  # must be specified
+        self.sample_length = 100
 
         self.input_size = (1, self.sample_length)
 
@@ -28,12 +22,9 @@ class TSNetTrainer(NetworkTrainer):
         self.add_optimizer('adam', optim.Adam(model.parameters(), lr=self.lr_init))
         # self.add_criterion('triplet_loss', TripletLoss())  # TODO: redefine loss
 
-        self.dataloader_maker = UCRDataLoaderBuilder(data_root, data_name, self.batch_size)
+        self.dataloader_maker = UCRDataLoaderBuilder(
+            data_root, data_name, self.batch_size, sample_length=self.sample_length)
         self.set_dataloaders(self.dataloader_maker)
-
-    @staticmethod
-    def get_or_else(config: dict, key, default):
-        return config[key] if key in config else default
 
     def num_samples(self, train_stage: TrainStage):
         if train_stage == TrainStage.TRAIN:
@@ -51,41 +42,37 @@ class TSNetTrainer(NetworkTrainer):
                  input_,
                  train_stage: TrainStage,
                  *args, **kwargs):
-        class_labels, in_data = input_
-        print(input_)
+        class_labels, anchors, positive_samples, negative_samples = input_
 
-        out = models.tsnet.model(in_data)
+        encoder = models.tsnet.model
+
+        z_anchors = encoder(anchors)
+        z_positive = encoder(positive_samples)
+        z_negative = encoder(negative_samples)
 
         # calculate loss
-        loss = torch.randn(1, 2, 3)  # TODO: actually calculate this
+        dotprod_pos = torch.bmm(z_anchors.view(self.batch_size, 1, -1),
+                                z_positive.view(self.batch_size, -1, 1))
+        dotprod_neg = torch.bmm(z_anchors.view(self.batch_size, 1, -1),
+                                z_negative.view(self.batch_size, -1, 1))
 
-        num_data_samples = self.num_samples(train_stage)
-
-        compared_length = None  # ???
-        num_random_samples = 12
-        sample_data = np.random.choice(
-            num_data_samples, size=(num_random_samples, self.batch_size))
-
-        example_length = np.random.randint(low=1, high=self.sample_length + 1)
-
-        anchor_length = np.random.randint(
-            low=example_length, high=self.sample_length + 1)
-        anchor_start_pos = np.random.randint(
-            low=0, high=self.sample_length - example_length + 1, size=self.batch_size)
-
-        pos_start_offset = np.random.randint(
-            low=0, high=self.sample_length - example_length + 1, size=self.batch_size)
-        pos_start_pos = anchor_start_pos + pos_start_offset
-
-        # calculate anchor, positive, negative representations
+        positive_loss = -torch.mean(nn.functional.logsigmoid(dotprod_pos))
+        negative_loss = torch.mean(nn.functional.logsigmoid(dotprod_neg))
+        total_loss = positive_loss + negative_loss
 
         if train_stage == TrainStage.TRAIN:
             adam = optimizers.adam
             adam.zero_grad()
-            loss.backward()
+            total_loss.backward()
             adam.step()
+
+        return (z_anchors, z_positive, z_negative), total_loss
 
 
 if __name__ == '__main__':
-    trainer = TSNetTrainer(config={})
+    test_config = {
+        'data_name': 'GunPoint',
+        'data_root': '/Users/dansuh/datasets/ucr-archive/UCRArchive_2018/',
+    }
+    trainer = TSNetTrainer(config=test_config)
     trainer.fit()
