@@ -4,3 +4,4 @@ numpy==1.18.0
 tensorboard==2.1.0
 pytorch-land==0.1.6
 pandas==0.25.3
+scipy==1.4.1
