@@ -3,6 +3,7 @@ import os
 import math
 import pandas as pd
 import numpy as np
+import scipy.signal as signal
 from torch.utils.data import dataset, SubsetRandomSampler
 from torchland.datasets.loader_builder import DataLoaderBuilder, DataLoader
 
@@ -90,10 +91,8 @@ class UCRDataset(dataset.Dataset):
     test_postfix = '_TEST'
     train_postfix = '_TRAIN'
 
-    def __init__(self, root_dir: str, dataset_name: str, train: bool,
-                 anchor_length: int, min_sample_length=0):
+    def __init__(self, root_dir: str, dataset_name: str, train: bool, sample_length: int):
         assert dataset_name in self.dataset_names, f'dataset name should be one of: {self.dataset_names}'
-        assert min_sample_length < anchor_length
 
         self.dataset_root = os.path.join(root_dir, dataset_name)
 
@@ -108,18 +107,16 @@ class UCRDataset(dataset.Dataset):
 
         _, sample_ts = self._get_row(idx=0)
         self.data_sample_length = len(sample_ts)
-        self.anchor_length = anchor_length
-        if self.data_sample_length <= self.anchor_length:
+        self.sample_length = sample_length
+        if self.data_sample_length <= self.sample_length:
             raise ValueError(
                 f'Data samples have length {self.data_sample_length}, '
-                f'while anchor length require: {self.anchor_length}')
+                f'while anchor length require: {self.sample_length}')
 
-        self.sample_length = np.random.randint(low=min_sample_length, high=self.anchor_length)
-
-        print(f'This dataset {dataset_name} will be generating '
-              f'positive / negative with length: {self.sample_length}, '
-              f'anchor data with length: {self.anchor_length} '
-              f'from samples that originally have lengths: {self.data_sample_length}')
+        self.resamp_ratio_low = 0.8
+        self.resamp_ratio_high = 1.2
+        self.cut_ratio_low = 0.6
+        self.cut_ratio_high = 0.9
 
     @classmethod
     def _determine_postfix(cls, train: bool):
@@ -135,26 +132,73 @@ class UCRDataset(dataset.Dataset):
 
     def __getitem__(self, idx: int):
         class_label, sample = self._get_row(idx)
-        anchor = self._random_cut(sample, size=self.anchor_length)
-        positive_samp = self._random_cut(anchor, size=self.sample_length)
+        # TODO: replace with something similar to RandomResizedCrop thing
+        anchor = self._random_cut_size(sample, size=self.sample_length)
+
+        # TODO: replace with something similar to RandomResizedCrop thing
+        positive_samp = self.random_resamp_cut(anchor)
 
         # mine negative sample
         negative_idx = self._select_idx_except(except_idx=idx)
         _, neg_sample = self._get_row(negative_idx)
-        negative_samp = self._random_cut(neg_sample, size=self.sample_length)
+        # TODO: replace with something similar to RandomResizedCrop thing
+        negative_samp = self.random_resamp_cut(neg_sample)
 
-        anchor = self._add_axis(self._to_float(anchor))
-        positive_samp = self._add_axis(self._to_float(positive_samp))
-        negative_samp = self._add_axis(self._to_float(negative_samp))
-
+        # specify the type and add an axis to the first dimension
+        anchor = self._add_axis(self._to_float32(anchor))
+        positive_samp = self._add_axis(self._to_float32(positive_samp))
+        negative_samp = self._add_axis(self._to_float32(negative_samp))
         return class_label, anchor, positive_samp, negative_samp
+
+    def random_resamp_cut(self, sample: np.ndarray):
+        return self._random_resamp_cut(
+            sample,
+            resamp_ratio_low=self.resamp_ratio_low,
+            resamp_ratio_high=self.resamp_ratio_high,
+            cut_ratio_low=self.cut_ratio_low,
+            cut_ratio_high=self.cut_ratio_high)
+
+    @staticmethod
+    def _random_cut_size(sample: np.ndarray, size: int):
+        num_samps = len(sample)
+        start_pos = np.random.randint(low=0, high=num_samps - size + 1)
+        end_pos = start_pos + size
+        return sample[start_pos:end_pos]
+
+    @staticmethod
+    def _random_resamp_cut(sample: np.ndarray, resamp_ratio_low: float, resamp_ratio_high: float,
+                           cut_ratio_low: float, cut_ratio_high: float):
+        samp_len = len(sample)
+        resamped = UCRDataset._random_resample(sample, resamp_ratio_low, resamp_ratio_high)
+        cut = UCRDataset._random_cut(resamped, ratio_low=cut_ratio_low, ratio_high=cut_ratio_high)
+        return UCRDataset._random_pad_min(cut, match_length=samp_len)
+
+    @staticmethod
+    def _random_resample(sample: np.ndarray, ratio_low: float, ratio_high: float):
+        assert ratio_low < ratio_high, f'ratio_low: {ratio_low}, ratio_high: {ratio_high}'
+        num_samp = len(sample)
+        samp_rate = np.random.uniform(low=ratio_low, high=ratio_high)
+        num_samp_after = int(num_samp * samp_rate)
+
+        return signal.resample(sample, num=num_samp_after)
+
+    @staticmethod
+    def _random_pad_min(sample: np.ndarray, match_length: int):
+        assert len(sample) <= match_length, f'match_length: {match_length}, sample_length: {len(sample)}'
+
+        # determine the size of left and right padding widths
+        to_pad = match_length - len(sample)
+        rpad_size = np.random.randint(low=0, high=to_pad)
+        lpad_size = to_pad - rpad_size
+
+        return np.pad(sample, pad_width=(rpad_size, lpad_size), mode='minimum')
 
     @staticmethod
     def _add_axis(sample: np.ndarray):
         return sample[np.newaxis, :]
 
     @staticmethod
-    def _to_float(sample: np.ndarray):
+    def _to_float32(sample: np.ndarray):
         return sample.astype(dtype=np.float32)
 
     def _get_row(self, idx: int):
@@ -163,10 +207,17 @@ class UCRDataset(dataset.Dataset):
         return class_label, timeseries
 
     @staticmethod
-    def _random_cut(sample: np.ndarray, size: int):
-        start_pos = np.random.randint(
-            low=0, high=len(sample) - size + 1)
-        end_pos = start_pos + size
+    def _random_cut(sample: np.ndarray, ratio_low: float, ratio_high=1.0):
+        assert ratio_low < ratio_high
+        assert ratio_low > 0.0
+        assert ratio_high <= 1.0
+
+        num_samps = len(sample)
+        cut_ratio = np.random.uniform(low=ratio_low, high=ratio_high)
+        num_samps_after = int(num_samps * cut_ratio)
+
+        start_pos = np.random.randint(low=0, high=num_samps - num_samps_after + 1)
+        end_pos = start_pos + num_samps_after
         return sample[start_pos: end_pos]
 
     def _select_idx_except(self, except_idx: int):
