@@ -54,18 +54,11 @@ class TSNetTrainer(NetworkTrainer):
         z_positive = encoder(positive_samples)
         z_negative = encoder(negative_samples)
 
-        target_ones = torch.ones(z_anchors.size(0))
-
         # calculate loss values
+        target_ones = torch.ones(z_anchors.size(0))
         positive_loss = cosine_embedding_loss(z_anchors, z_positive, target=target_ones)
         negative_loss = cosine_embedding_loss(z_anchors, z_negative, target=-target_ones)
         total_loss = positive_loss + negative_loss
-
-        # print(z_anchors[:10])
-        # print(z_positive[:10])
-        # print(z_negative[:10])
-        # print(negative_loss)
-        # print()
 
         if train_stage == TrainStage.TRAIN:
             adam = optimizers.adam

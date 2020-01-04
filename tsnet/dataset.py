@@ -136,13 +136,11 @@ class UCRDataset(dataset.Dataset):
         anchor = self._random_cut_size(sample, size=self.sample_length)
 
         positive_samp = self.random_resamp_cut(anchor)
-        # positive_samp = self._random_cut_size(sample, size=self.sample_length - 20)
 
-        # mine negative sample
-        negative_idx = self._select_idx_except(except_idx=class_label)  # TODO: debug
+        # mine a negative sample
+        negative_idx = self._select_idx_except(except_idx=idx)
         _, neg_sample = self._get_row(negative_idx)
         negative_samp = self.random_resamp_cut(neg_sample)
-        # negative_samp = self._random_cut_size(neg_sample, size=self.sample_length - 20)
 
         # specify the type and add an axis to the first dimension
         anchor = self._add_axis(self._to_float32(anchor))
@@ -229,8 +227,7 @@ class UCRDataset(dataset.Dataset):
     def _select_idx_except(self, except_idx: int):
         while True:
             selected_idx = np.random.randint(low=0, high=len(self))
-            selected_class, selected_data = self._get_row(selected_idx)  # TODO: experimental
-            if selected_class != except_idx:
+            if selected_idx != except_idx:
                 return selected_idx
 
     def __len__(self):
