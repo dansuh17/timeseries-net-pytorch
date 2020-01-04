@@ -59,7 +59,8 @@ class UCRDataLoaderBuilder(DataLoaderBuilder):
             num_workers=self.num_workers,
             sampler=sampler,
             drop_last=True,
-            pin_memory=True)
+            pin_memory=True,
+        )
 
 
 class UCRDataset(dataset.Dataset):
@@ -132,17 +133,16 @@ class UCRDataset(dataset.Dataset):
 
     def __getitem__(self, idx: int):
         class_label, sample = self._get_row(idx)
-        # TODO: replace with something similar to RandomResizedCrop thing
         anchor = self._random_cut_size(sample, size=self.sample_length)
 
-        # TODO: replace with something similar to RandomResizedCrop thing
         positive_samp = self.random_resamp_cut(anchor)
+        # positive_samp = self._random_cut_size(sample, size=self.sample_length - 20)
 
         # mine negative sample
-        negative_idx = self._select_idx_except(except_idx=idx)
+        negative_idx = self._select_idx_except(except_idx=class_label)  # TODO: debug
         _, neg_sample = self._get_row(negative_idx)
-        # TODO: replace with something similar to RandomResizedCrop thing
         negative_samp = self.random_resamp_cut(neg_sample)
+        # negative_samp = self._random_cut_size(neg_sample, size=self.sample_length - 20)
 
         # specify the type and add an axis to the first dimension
         anchor = self._add_axis(self._to_float32(anchor))
@@ -156,7 +156,8 @@ class UCRDataset(dataset.Dataset):
             resamp_ratio_low=self.resamp_ratio_low,
             resamp_ratio_high=self.resamp_ratio_high,
             cut_ratio_low=self.cut_ratio_low,
-            cut_ratio_high=self.cut_ratio_high)
+            cut_ratio_high=self.cut_ratio_high,
+        )
 
     @staticmethod
     def _random_cut_size(sample: np.ndarray, size: int):
@@ -171,7 +172,12 @@ class UCRDataset(dataset.Dataset):
         samp_len = len(sample)
         resamped = UCRDataset._random_resample(sample, resamp_ratio_low, resamp_ratio_high)
         cut = UCRDataset._random_cut(resamped, ratio_low=cut_ratio_low, ratio_high=cut_ratio_high)
-        return UCRDataset._random_pad_min(cut, match_length=samp_len)
+        if len(cut) > samp_len:
+            return UCRDataset._random_cut_size(sample, size=samp_len)
+        elif len(cut) < samp_len:
+            return UCRDataset._random_pad(cut, match_length=samp_len)
+        else:
+            return cut
 
     @staticmethod
     def _random_resample(sample: np.ndarray, ratio_low: float, ratio_high: float):
@@ -183,7 +189,7 @@ class UCRDataset(dataset.Dataset):
         return signal.resample(sample, num=num_samp_after)
 
     @staticmethod
-    def _random_pad_min(sample: np.ndarray, match_length: int):
+    def _random_pad(sample: np.ndarray, match_length: int):
         assert len(sample) <= match_length, f'match_length: {match_length}, sample_length: {len(sample)}'
 
         # determine the size of left and right padding widths
@@ -191,7 +197,7 @@ class UCRDataset(dataset.Dataset):
         rpad_size = np.random.randint(low=0, high=to_pad)
         lpad_size = to_pad - rpad_size
 
-        return np.pad(sample, pad_width=(rpad_size, lpad_size), mode='minimum')
+        return np.pad(sample, pad_width=(rpad_size, lpad_size), mode='constant', constant_values=0)
 
     @staticmethod
     def _add_axis(sample: np.ndarray):
@@ -222,8 +228,9 @@ class UCRDataset(dataset.Dataset):
 
     def _select_idx_except(self, except_idx: int):
         while True:
-            selected_idx = np.random.randint(low=0, high=len(self) + 1)
-            if selected_idx != except_idx:
+            selected_idx = np.random.randint(low=0, high=len(self))
+            selected_class, selected_data = self._get_row(selected_idx)  # TODO: experimental
+            if selected_class != except_idx:
                 return selected_idx
 
     def __len__(self):
@@ -233,4 +240,5 @@ class UCRDataset(dataset.Dataset):
 if __name__ == '__main__':
     dataset = UCRDataset(root_dir='/Users/dansuh/datasets/ucr-archive/UCRArchive_2018/',
                          dataset_name='GunPoint',
-                         train=True, anchor_length=100, min_sample_length=80)
+                         train=True,
+                         sample_length=100)

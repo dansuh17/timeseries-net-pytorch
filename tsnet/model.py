@@ -16,12 +16,12 @@ class CausalConvBlock(nn.Module):
             # sub-block 1
             nn.ConstantPad1d(pad_dims, value=0),
             nn.utils.weight_norm(
-                nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation)),
+                nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation, bias=False)),
             nn.LeakyReLU(negative_slope=0.01, inplace=True),
             # sub-block 2
             nn.ConstantPad1d(pad_dims, value=0),
             nn.utils.weight_norm(
-                nn.Conv1d(out_channels, out_channels, kernel_size, dilation=dilation)),
+                nn.Conv1d(out_channels, out_channels, kernel_size, dilation=dilation, bias=False)),
             nn.LeakyReLU(negative_slope=0.01, inplace=True),
         )
 
@@ -29,7 +29,7 @@ class CausalConvBlock(nn.Module):
         self.resample: bool = in_channels != out_channels
         self.conv_resample = None
         if self.resample:
-            self.conv_resample = nn.Conv1d(in_channels, out_channels, kernel_size=1)
+            self.conv_resample = nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=False)
 
     def forward(self, x):
         if self.resample:
@@ -80,7 +80,7 @@ class TSNet(nn.Module):
             CausalCNN(in_channel, middle_channels, dilations=doubled_dilations(num_layers)),
             nn.AdaptiveAvgPool1d(output_size=1),  # reduce size
             SqueezeTimeChannel(),  # reduce dimensions
-            nn.Linear(in_features=middle_channel, out_features=out_channel),
+            nn.Linear(in_features=middle_channel, out_features=out_channel, bias=False),
         )
 
     def forward(self, x):
@@ -88,9 +88,7 @@ class TSNet(nn.Module):
 
 
 if __name__ == '__main__':
-    net = TSNet(in_channel=1, middle_channel=2, out_channel=123, num_layers=10)
-
+    net = TSNet(in_channel=1, middle_channel=2, out_channel=10, num_layers=10)
     dummy = torch.randn((1, 1, 2000))
     out = net(dummy)
-
     print(out.size())
