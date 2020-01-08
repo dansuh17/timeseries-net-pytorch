@@ -10,7 +10,7 @@ class TSNetTrainer(NetworkTrainer):
     def __init__(self, config: dict):
         super().__init__(epoch=config.get('epoch', 30))
         self.lr_init = config.get('lr_init', 3e-4)
-        self.batch_size = config.get('batch_size', 5)
+        self.batch_size = config.get('batch_size', 10)
         data_root = config.get('data_root', 'data_in')
         data_name = config.get('data_name', None)  # must be specified
         self.sample_length = config.get('sample_length', 100)
@@ -95,12 +95,20 @@ class TSNetTrainer(NetworkTrainer):
             model = self._models.tsnet.model
 
             for step, input_ in enumerate(self._dataloaders.test_loader):
-                class_labels, samples, _, _ = input_
-                embd = model(samples).squeeze()
+                class_labels, anchor_samps, positive_samps, _ = input_
 
-                embeddings.append(embd)
+                with torch.no_grad():
+                    anchor_embd = model(anchor_samps).squeeze()
+                    pos_embd = model(positive_samps).squeeze()
+
+                embeddings.append(anchor_embd)
                 class_label_list.append(class_labels)
-                samples_list.append(samples[:, :, :100])
+
+                embeddings.append(pos_embd)
+                class_label_list.append(class_labels)
+
+                samples_list.append(anchor_samps[:, :, :100])
+                samples_list.append(positive_samps[:, :, :100])
 
             # concatenate all by batches
             embeddings_cat = torch.cat(embeddings, dim=0).squeeze()
@@ -109,8 +117,7 @@ class TSNetTrainer(NetworkTrainer):
 
             scale_factor = 5
             samp_vals = torch.floor((samples_cat * scale_factor + 20)).type(torch.long).clamp(min=0, max=99)
-            print(samp_vals.min())
-            print(samp_vals.max())
+
             img_tensors = []
             for samp_val in samp_vals:
                 num_samps = samp_val.size(0)
@@ -141,7 +148,7 @@ class TSNetTrainer(NetworkTrainer):
 
 if __name__ == '__main__':
     test_config = {
-        'epoch': 150,
+        'epoch': 300,
         'data_name': 'ChlorineConcentration',
         'data_root': '/Users/dansuh/datasets/ucr-archive/UCRArchive_2018/',
         'sample_length': 150,
